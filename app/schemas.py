@@ -1,4 +1,5 @@
 from datetime import datetime
+from nt import access
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -15,22 +16,36 @@ class PostUpdate(BaseModel):
 
 
 
-
-
 class UserCreate(UserBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     image_file: str|None
     image_path : str 
+    password:str = Field(min_length=8  )
 
-class UserResponse(UserBase):        
-    pass
+
+class UserPublic(BaseModel):        
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username : str
+    image_file: str|None
+    image_path : str
+
+
+class UserPrivate(UserPublic):
+    email: EmailStr     
 
 class UserUpdate(BaseModel):
     username: str | None =  Field(defualt = None,min_length=1, max_length=50)
     email : EmailStr |None = Field(defualt = None,max_length=120)
     image_file: str|None =  Field(defualt = None, max_length=200)
 
+
+
+class Token(BaseModel):
+    access_token:str
+    token_type: str
 
 
 class PostBase(BaseModel):
@@ -48,4 +63,4 @@ class PostResponse(PostBase):
     id: int
     user_id: int
     date_posted: datetime
-    author: UserResponse
+    author: UserPublic
