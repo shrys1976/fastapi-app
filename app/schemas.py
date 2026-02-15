@@ -5,6 +5,18 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class UserBase(BaseModel):
     username: str =  Field(min_length=1, max_length=50)
     email : EmailStr = Field(max_length=120)
+
+
+
+class PostUpdate(BaseModel):
+    title: str | None= Field(defualt = None,min_length=1, max_length=100)
+    content: str | None = Field(defualt = None, min_length=1)
+    #author : str = Field(min_length=1, max_length=50)
+
+
+
+
+
 class UserCreate(UserBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -14,7 +26,10 @@ class UserCreate(UserBase):
 class UserResponse(UserBase):        
     pass
 
-
+class UserUpdate(BaseModel):
+    username: str | None =  Field(defualt = None,min_length=1, max_length=50)
+    email : EmailStr |None = Field(defualt = None,max_length=120)
+    image_file: str|None =  Field(defualt = None, max_length=200)
 
 
 
