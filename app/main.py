@@ -1,90 +1,89 @@
-from fastapi import FastAPI, HTTPException, Request, status, Depends
-import fastapi
-from fastapi.responses import HTMLResponse
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.exception_handlers import (
+    http_exception_handler,
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.status import HTTP_404_NOT_FOUND
-from typing import Annotated
-from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
-
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.database import Base, engine, get_db
 from app import models
-from app.schemas import PostCreate, PostResponse, UserCreate, UserResponse, PostUpdate, UserUpdate 
-from contextlib import asynccontextmanager
-
+from app.database import Base, engine, get_db
 from routers import posts, users
 
-#Base.metadata.create_all(bind=engine)
 
 @asynccontextmanager
-async def lifespan(_app : FastAPI):
-
+async def lifespan(_app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    yield 
-
+        user_columns = {
+            row[1]
+            for row in (
+                await conn.exec_driver_sql("PRAGMA table_info(users)")
+            ).fetchall()
+        }
+        if "password_hash" not in user_columns:
+            await conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN password_hash VARCHAR(200) NOT NULL DEFAULT ''",
+            )
+    yield
     await engine.dispose()
 
 
-
-
-
-app = FastAPI(lifespan = lifespan)
+app = FastAPI(lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/media", StaticFiles(directory="media"), name="media")
 templates = Jinja2Templates(directory="templates")
 
-app.include_router(users.router, prefix = "/api/users",tags = ["users"])
-app.include_router(posts.router, prefix="/api/posts",tags = ["posts"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
 
 
-
-
-## home
 @app.get("/", include_in_schema=False, name="home")
 @app.get("/posts", include_in_schema=False, name="posts")
 async def home(request: Request, db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(models.Post)
-    .options(selectinload(models.Post.author)).order_by(models.Post.date_posted.desc())
-    
-    ,)
-    posts = result.scalars().all()
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .order_by(models.Post.date_posted.desc()),
+    )
+    posts_list = result.scalars().all()
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"posts": posts, "title": "Home"},
-    )   
+        {"posts": posts_list, "title": "Home"},
+    )
 
 
-
-
-## post_page
 @app.get("/posts/{post_id}", include_in_schema=False, name="post_page")
-async def post_page(request: Request, post_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).where(models.Post.id == post_id))
+async def post_page(
+    request: Request,
+    post_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .where(models.Post.id == post_id),
+    )
     post = result.scalars().first()
     if post:
-        title = post.title[:50]
         return templates.TemplateResponse(
             request,
             "post.html",
-            {"post": post, "title": title},
+            {"post": post, "title": post.title[:50]},
         )
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
 
 
-
-
-## user_posts_page
 @app.get("/users/{user_id}/posts", include_in_schema=False, name="user_posts")
 async def user_posts_page(
     request: Request,
@@ -99,18 +98,21 @@ async def user_posts_page(
             detail="User not found",
         )
 
-    result = await db.execute(select(models.Post).where(models.Post.user_id == user_id))
-    posts = result.scalars().all()
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .where(models.Post.user_id == user_id)
+        .order_by(models.Post.date_posted.desc()),
+    )
+    posts_list = result.scalars().all()
     return templates.TemplateResponse(
         request,
         "user_post.html",
-        {"posts": posts, "user": user, "title": f"{user.username}'s Posts"},
+        {"posts": posts_list, "user": user, "title": f"{user.username}'s Posts"},
     )
 
 
-
-## login and register template_routes
-@app.get("/login", include_in_schema=False)
+@app.get("/login", include_in_schema=False, name="login_page")
 async def login_page(request: Request):
     return templates.TemplateResponse(
         request,
@@ -119,7 +121,7 @@ async def login_page(request: Request):
     )
 
 
-@app.get("/register", include_in_schema=False)
+@app.get("/register", include_in_schema=False, name="register_page")
 async def register_page(request: Request):
     return templates.TemplateResponse(
         request,
@@ -128,25 +130,28 @@ async def register_page(request: Request):
     )
 
 
-
-
-## StarletteHTTPException Handler
-@app.exception_handler(StarletteHTTPException)
-async def general_http_exception_handler(request: Request, exception: StarletteHTTPException):
-    
-
-    if request.url.path.startswith("/api"):
-        return await http_exception_handler(request,exception)
-
-    message = (
-
-        exception.detail
-        if exception.detail
-        else "An error occured. Please check your request and try again"
+@app.get("/account", include_in_schema=False, name="account_page")
+async def account_page(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "account.html",
+        {"title": "Account"},
     )
 
 
+@app.exception_handler(StarletteHTTPException)
+async def general_http_exception_handler(
+    request: Request,
+    exception: StarletteHTTPException,
+):
+    if request.url.path.startswith("/api"):
+        return await http_exception_handler(request, exception)
 
+    message = (
+        exception.detail
+        if exception.detail
+        else "An error occurred. Please check your request and try again"
+    )
     return templates.TemplateResponse(
         request,
         "error.html",
@@ -160,28 +165,25 @@ async def general_http_exception_handler(request: Request, exception: StarletteH
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exception: RequestValidationError):
-    
-
+async def validation_exception_handler(
+    request: Request,
+    exception: RequestValidationError,
+):
     if request.url.path.startswith("/api"):
-        return await request_validation_exception_handler(request,exception)
+        return await request_validation_exception_handler(request, exception)
 
-    message = (
-
-        exception.detail
-        if exception.detail
-        else "Invalid request. Please check your input and try again"
-    )
+    message = "Invalid request. Please check your input and try again"
+    errors = exception.errors()
+    if errors:
+        message = "; ".join(err.get("msg", "Invalid input") for err in errors)
 
     return templates.TemplateResponse(
         request,
         "error.html",
         {
-            "status_code": exception.status_code,
-            "title": exception.status_code,
+            "status_code": status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "title": status.HTTP_422_UNPROCESSABLE_ENTITY,
             "message": message,
         },
-        status_code=exception.status_code,
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
     )
-
-

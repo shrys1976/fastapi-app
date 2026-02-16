@@ -1,8 +1,3 @@
-## database.py
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
-## database.py imports (async)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -13,7 +8,11 @@ engine = create_async_engine(
     connect_args={"check_same_thread": False},
 )
 
-AsyncSessionLocal =async_sessionmaker(engine, class_ = AsyncSession, expire_on_commit=False,)
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
 
 class Base(DeclarativeBase):
@@ -21,5 +20,5 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
-   async with AsyncSessionLocal() as session:
+    async with AsyncSessionLocal() as session:
         yield session
